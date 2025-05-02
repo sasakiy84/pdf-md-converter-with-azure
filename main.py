@@ -711,24 +711,71 @@ def process_markdown(
 
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser()
-    subparsers = argparser.add_subparsers(help="subcommand help")
+    argparser = argparse.ArgumentParser(
+        description="PDFファイルをAzure OCRで解析し、Markdownに変換してEPUBを生成するツール",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  1. PDFファイルの解析:
+     python main.py azure input.pdf --resultdir results --use-formula-addon
+
+  2. 解析結果のMarkdown変換:
+     python main.py markdown results/input --table-mode markdown --figure-mode image
+
+  3. 複数のPDFファイルを一括処理:
+     python main.py azure_all pdf_directory --resultdir ocr_results
+
+  4. 複数の解析結果を一括変換:
+     python main.py markdown_all ocr_results --table-mode image_with_comment_md
+"""
+    )
+    subparsers = argparser.add_subparsers(help="サブコマンドのヘルプ")
 
     def ocr_command(args: argparse.Namespace):
+        """
+        PDFファイルをAzure OCRで解析する
+        """
         pdf_file_path: Path = args.pdf_file_path
         result_root_folder_path: Path = args.resultdir
 
-        process_azure(pdf_file_path, result_root_folder_path, args.use_formula_addon)
-        
+        if not pdf_file_path.exists():
+            print(f"エラー: ファイル '{pdf_file_path}' が見つかりません")
+            return
 
-    azure_ocr_parser = subparsers.add_parser("azure")
-    azure_ocr_parser.add_argument("pdf_file_path", type=Path)
-    azure_ocr_parser.add_argument("--resultdir", type=Path, default=Path("results"))
-    azure_ocr_parser.add_argument("--use-formula-addon", type=bool, default=False)
+        process_azure(pdf_file_path, result_root_folder_path, args.use_formula_addon)
+
+    azure_ocr_parser = subparsers.add_parser(
+        "azure",
+        help="PDFファイルをAzure OCRで解析する",
+        description="指定されたPDFファイルをAzure OCRで解析し、結果をJSONファイルとして保存します。"
+    )
+    azure_ocr_parser.add_argument(
+        "pdf_file_path",
+        type=Path,
+        help="解析するPDFファイルのパス"
+    )
+    azure_ocr_parser.add_argument(
+        "--resultdir",
+        type=Path,
+        default=Path("results"),
+        help="解析結果を保存するディレクトリ (デフォルト: results)"
+    )
+    azure_ocr_parser.add_argument(
+        "--use-formula-addon",
+        action="store_true",
+        help="数式の解析を有効にする (デフォルト: 無効)"
+    )
     azure_ocr_parser.set_defaults(func=ocr_command)
 
     def markdown_command(args: argparse.Namespace):
+        """
+        Azure OCRの解析結果をMarkdownに変換する
+        """
         result_folder_path: Path = args.result_folder_path
+        if not result_folder_path.exists():
+            print(f"エラー: ディレクトリ '{result_folder_path}' が見つかりません")
+            return
+
         cover_page = args.cover_page if not args.no_cover else None
         process_markdown(
             result_folder_path,
@@ -738,46 +785,93 @@ if __name__ == "__main__":
             args.figure_mode,
         )
 
-    markdown_parser = subparsers.add_parser("markdown")
-    markdown_parser.add_argument("result_folder_path", type=Path)
-    markdown_parser.add_argument("--pdf_file_path", type=Path, default=None)
-    markdown_parser.add_argument("--cover_page", type=int, default=0)
-    markdown_parser.add_argument("--no-cover", type=bool, default=False)
+    markdown_parser = subparsers.add_parser(
+        "markdown",
+        help="Azure OCRの解析結果をMarkdownに変換する",
+        description="Azure OCRの解析結果をMarkdown形式に変換し、EPUB生成に必要なファイルを作成します。"
+    )
+    markdown_parser.add_argument(
+        "result_folder_path",
+        type=Path,
+        help="Azure OCRの解析結果が保存されているディレクトリ"
+    )
+    markdown_parser.add_argument(
+        "--cover_page",
+        type=int,
+        default=0,
+        help="表紙として使用するページ番号 (デフォルト: 0)"
+    )
+    markdown_parser.add_argument(
+        "--no-cover",
+        action="store_true",
+        help="表紙画像を生成しない"
+    )
     markdown_parser.add_argument(
         "--table-mode",
         type=str,
         choices=["image", "markdown", "image_with_comment_md"],
         default="image_with_comment_md",
-        help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+        help="表の出力形式を指定: 'image'は画像として、'markdown'はマークダウン形式で、'image_with_comment_md'は両方の形式で出力 (デフォルト)"
     )
     markdown_parser.add_argument(
         "--figure-mode",
         type=str,
         choices=["image", "image_with_comment_md"],
         default="image_with_comment_md",
-        help="Figure output mode: 'image' for image-based figures, 'image_with_comment_md' for image with OCR text in comments (default)",
+        help="図の出力形式を指定: 'image'は画像として、'image_with_comment_md'は画像とOCRテキストの両方で出力 (デフォルト)"
     )
     markdown_parser.set_defaults(func=markdown_command)
 
-
-    # 上記のスクリプトを、指定されたディレクトリ内のすべての PDF ファイルに対して実行する
     def azure_all_command(args: argparse.Namespace):
+        """
+        指定されたディレクトリ内のすべてのPDFファイルをAzure OCRで解析する
+        """
         pdf_file_path: Path = args.pdf_file_path
         result_root_folder_path: Path = args.resultdir
+
+        if not pdf_file_path.exists():
+            print(f"エラー: ディレクトリ '{pdf_file_path}' が見つかりません")
+            return
+
         for pdf_file in pdf_file_path.glob("*.pdf"):
             process_azure(pdf_file, result_root_folder_path, args.use_formula_addon)
-            
-    azure_azure_all_parser = subparsers.add_parser("azure_all")
-    azure_azure_all_parser.add_argument("pdf_file_path", type=Path)
-    azure_azure_all_parser.add_argument("--resultdir", type=Path, default=Path("ocr_results"))
-    azure_azure_all_parser.add_argument("--use-formula-addon", type=bool, default=False)
-    azure_azure_all_parser.set_defaults(func=azure_all_command)
+
+    azure_all_parser = subparsers.add_parser(
+        "azure_all",
+        help="複数のPDFファイルを一括でAzure OCRで解析する",
+        description="指定されたディレクトリ内のすべてのPDFファイルをAzure OCRで解析し、結果をJSONファイルとして保存します。"
+    )
+    azure_all_parser.add_argument(
+        "pdf_file_path",
+        type=Path,
+        help="PDFファイルが格納されているディレクトリのパス"
+    )
+    azure_all_parser.add_argument(
+        "--resultdir",
+        type=Path,
+        default=Path("ocr_results"),
+        help="解析結果を保存するディレクトリ (デフォルト: ocr_results)"
+    )
+    azure_all_parser.add_argument(
+        "--use-formula-addon",
+        action="store_true",
+        help="数式の解析を有効にする (デフォルト: 無効)"
+    )
+    azure_all_parser.set_defaults(func=azure_all_command)
 
     def markdown_all_command(args: argparse.Namespace):
+        """
+        複数のAzure OCR解析結果を一括でMarkdownに変換する
+        """
         result_folder_path: Path = args.result_folder_path
-        # サブディレクトリを全て取得する（glob）
+        if not result_folder_path.exists():
+            print(f"エラー: ディレクトリ '{result_folder_path}' が見つかりません")
+            return
+
         subdirs = [d for d in result_folder_path.glob("*") if d.is_dir()]
-        print(f"subdirs: {subdirs}")
+        if not subdirs:
+            print(f"警告: 変換対象のディレクトリが見つかりません: {result_folder_path}")
+            return
 
         for subdir in subdirs:
             process_markdown(
@@ -788,24 +882,40 @@ if __name__ == "__main__":
                 args.figure_mode,
             )
 
-    markdown_all_parser = subparsers.add_parser("markdown_all")
-    markdown_all_parser.add_argument("result_folder_path", type=Path)
-    markdown_all_parser.add_argument("--pdf_file_path", type=Path, default=None)
-    markdown_all_parser.add_argument("--cover_page", type=int, default=0)
-    markdown_all_parser.add_argument("--no-cover", type=bool, default=False)
+    markdown_all_parser = subparsers.add_parser(
+        "markdown_all",
+        help="複数のAzure OCR解析結果を一括でMarkdownに変換する",
+        description="指定されたディレクトリ内のすべてのAzure OCR解析結果をMarkdown形式に変換し、EPUB生成に必要なファイルを作成します。"
+    )
+    markdown_all_parser.add_argument(
+        "result_folder_path",
+        type=Path,
+        help="Azure OCRの解析結果が保存されているディレクトリ"
+    )
+    markdown_all_parser.add_argument(
+        "--cover_page",
+        type=int,
+        default=0,
+        help="表紙として使用するページ番号 (デフォルト: 0)"
+    )
+    markdown_all_parser.add_argument(
+        "--no-cover",
+        action="store_true",
+        help="表紙画像を生成しない"
+    )
     markdown_all_parser.add_argument(
         "--table-mode",
         type=str,
         choices=["image", "markdown", "image_with_comment_md"],
         default="image_with_comment_md",
-        help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+        help="表の出力形式を指定: 'image'は画像として、'markdown'はマークダウン形式で、'image_with_comment_md'は両方の形式で出力 (デフォルト)"
     )
     markdown_all_parser.add_argument(
         "--figure-mode",
         type=str,
         choices=["image", "image_with_comment_md"],
         default="image_with_comment_md",
-        help="Figure output mode: 'image' for image-based figures, 'image_with_comment_md' for image with OCR text in comments (default)",
+        help="図の出力形式を指定: 'image'は画像として、'image_with_comment_md'は画像とOCRテキストの両方で出力 (デフォルト)"
     )
     markdown_all_parser.set_defaults(func=markdown_all_command)
 
