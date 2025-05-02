@@ -41,7 +41,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import re
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 from azure.core.pipeline.policies import RetryPolicy
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -122,7 +122,17 @@ class DocGennerator:
         result_folder_path: Path,
         *,
         logger: Logger = getLogger(__name__),
+        table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md",
     ):
+        """
+        result は、azure の OCR データでテキストや座標などの情報が含まれている
+        pdf_file_path は、入力 pdf ファイルのパスで、画像や表紙を取得するために使用する
+        result_folder_path は、出力するファイルのパスで、markdown や epub などのファイルを保存する
+        table_mode は、表の出力形式を指定する。
+        image は画像として表を保存する。
+        markdown はマークダウン形式で表を保存する。
+        image_with_comment_md は画像として表を保存し、その後にコメントとしてマークダウン形式のテーブルを埋め込む。
+        """
         self.result = result
         self.content = result.content
         self.pages = result.pages
@@ -134,6 +144,7 @@ class DocGennerator:
         self.asset_folder_path = result_folder_path / "figures"
         self.asset_folder_path.mkdir(exist_ok=True, parents=True)
         self.logger = logger
+        self.table_mode = table_mode
 
         self.formulas: list[DocumentFormula] = []
         for page in self.pages:
@@ -374,9 +385,21 @@ class DocGennerator:
     def _process_table(self, table: DocumentTable) -> str:
         """
         table の処理を行う.
-        table の場所を clipping して、画像として保存する
+        table_mode に応じて、画像として保存するか、マークダウン形式で出力するかを選択する
         """
+        if self.table_mode == "image":
+            return self._process_table_as_image(table)
+        elif self.table_mode == "markdown":
+            return self._process_table_as_markdown(table)
+        elif self.table_mode == "image_with_comment_md":
+            return self._process_table_as_image_with_comment_md(table)
+        else:
+            raise ValueError(f"Invalid table_mode: {self.table_mode}")
 
+    def _process_table_as_image(self, table: DocumentTable) -> str:
+        """
+        table を画像として保存する
+        """
         markdown = ""
         page_number: int | None = None
         polygons: list[float] = []
@@ -420,6 +443,72 @@ class DocGennerator:
 
         self._table_number_counter += 1
         return markdown
+
+    def _process_table_as_markdown(self, table: DocumentTable) -> str:
+        """
+        table をマークダウン形式で出力する
+        """
+        markdown = "\n\n"
+        
+        # キャプションがあれば追加
+        if table.caption is not None and table.caption.content:
+            markdown += f"**{table.caption.content}**\n\n"
+
+        # テーブルのヘッダーとセルを取得
+        if not table.cells:
+            return markdown
+
+        # 列数を取得
+        max_col = max(cell.column_index for cell in table.cells)
+        max_row = max(cell.row_index for cell in table.cells)
+
+        # テーブルのヘッダー行を取得
+        header_cells = [cell for cell in table.cells if cell.kind == "columnHeader"]
+        if not header_cells:
+            # ヘッダー行がない場合は最初の行をヘッダーとして扱う
+            header_cells = [cell for cell in table.cells if cell.row_index == 0]
+
+        # ヘッダー行を作成
+        header_row = [""] * (max_col + 1)
+        for cell in header_cells:
+            header_row[cell.column_index] = cell.content
+
+        # ヘッダー行を出力
+        markdown += "| " + " | ".join(header_row) + " |\n"
+        markdown += "| " + " | ".join(["---"] * (max_col + 1)) + " |\n"
+
+        # データ行を出力
+        for row in range(1 if header_cells else 0, max_row + 1):
+            row_cells = [cell for cell in table.cells if cell.row_index == row]
+            if not row_cells:
+                continue
+
+            row_data = [""] * (max_col + 1)
+            for cell in row_cells:
+                row_data[cell.column_index] = cell.content
+
+            markdown += "| " + " | ".join(row_data) + " |\n"
+
+        # フットノートがあれば追加
+        footnotes = table.footnotes if table.footnotes is not None else []
+        for i, footnote in enumerate(footnotes):
+            if footnote.content:
+                markdown += f"\n^{i+1}: {footnote.content}\n"
+
+        markdown += "\n"
+        return markdown
+
+    def _process_table_as_image_with_comment_md(self, table: DocumentTable) -> str:
+        """
+        table を画像として保存し、その後にコメントとしてマークダウン形式のテーブルを埋め込む
+        """
+        image_markdown = self._process_table_as_image(table)
+        md_table = self._process_table_as_markdown(table)
+        
+        # マークダウンテーブルをHTMLコメントとして埋め込む
+        comment_md = f"\n<!--\nMarkdown table version:\n{md_table}\n-->\n"
+        
+        return image_markdown + comment_md
 
     def _process_section(
         self,
@@ -527,7 +616,10 @@ class DocGennerator:
 
 
 def construct_markdown_from_result(
-    analyzed_json_path: Path, pdf_file_path: Path, cover_page_number: int | None = 0
+    analyzed_json_path: Path,
+    pdf_file_path: Path,
+    cover_page_number: int | None = 0,
+    table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md",
 ) -> str:
     """
     section を上から順に見ていき、順番に markdown に変換していく
@@ -536,7 +628,12 @@ def construct_markdown_from_result(
     result_content: AnalyzeResult = AnalyzeResult(
         json.loads(analyzed_json_path.read_text())
     )
-    doc_generator = DocGennerator(result_content, pdf_file_path, analyzed_json_path.parent)
+    doc_generator = DocGennerator(
+        result_content,
+        pdf_file_path,
+        analyzed_json_path.parent,
+        table_mode=table_mode,
+    )
     if cover_page_number is not None:
         doc_generator.save_cover_image(cover_page_number)
     return doc_generator.gen()
@@ -577,7 +674,10 @@ if __name__ == "__main__":
         )
         cover_page = args.cover_page if not args.no_cover else None
         markdown = construct_markdown_from_result(
-            json_file_path, pdf_file_path, cover_page
+            json_file_path,
+            pdf_file_path,
+            cover_page,
+            table_mode=args.table_mode,
         )
         result_markdown_file_path = result_folder_path / "result.md"
         result_markdown_file_path.write_text(markdown)
@@ -595,7 +695,7 @@ if __name__ == "__main__":
         epub_css_file_path.write_text(epub_css)
 
         print(
-            f"cd {result_folder_path} && pandoc result.md -o {result_folder_path.with_suffix('.epub').name} --toc --epub-cover-image=figures/cover.png  --metadata title='{result_folder_path.name}' --css=epub.css"
+            f"cd {result_folder_path} && pandoc result.md -o {result_folder_path.with_suffix('.epub').name} --toc --epub-cover-image=figures/cover.png  --metadata title='{result_folder_path.name}' --css=epub.css --strip-comments"
         )
 
     markdown_parser = subparsers.add_parser("markdown")
@@ -603,6 +703,13 @@ if __name__ == "__main__":
     markdown_parser.add_argument("--pdf_file_path", type=Path, default=None)
     markdown_parser.add_argument("--cover_page", type=int, default=0)
     markdown_parser.add_argument("--no-cover", type=bool, default=False)
+    markdown_parser.add_argument(
+        "--table-mode",
+        type=str,
+        choices=["image", "markdown", "image_with_comment_md"],
+        default="image_with_comment_md",
+        help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+    )
     markdown_parser.set_defaults(func=markdown_command)
 
     args = argparser.parse_args()
