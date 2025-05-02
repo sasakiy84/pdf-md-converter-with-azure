@@ -380,6 +380,19 @@ class DocGennerator:
                 image.save(self.asset_folder_path / f"fig_{figure.id}_footnote_{i}.png")
                 markdown += f"\n\n![{figure.id} footnote {i}](./figures/fig_{figure.id}_footnote_{i}.png) \\\n\n"
 
+        # elements から paragraph の情報を取得してコメントとして追加
+        if figure.elements:
+            markdown += "\n<!--\nExtracted text:\n"
+            for element in figure.elements:
+                element_info = self._get_element(element)
+                if element_info is not None:
+                    element_obj, element_id = element_info
+                    if isinstance(element_obj, DocumentParagraph):
+                        text = self._get_element_text(element_obj, element_id)
+                        if text:
+                            markdown += text
+            markdown += "-->\n"
+
         return markdown
 
     def _process_table(self, table: DocumentTable) -> str:
