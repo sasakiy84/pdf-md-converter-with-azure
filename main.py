@@ -764,6 +764,13 @@ if __name__ == "__main__":
     markdown_all_parser.add_argument("--pdf_file_path", type=Path, default=None)
     markdown_all_parser.add_argument("--cover_page", type=int, default=0)
     markdown_all_parser.add_argument("--no-cover", type=bool, default=False)
+    markdown_all_parser.add_argument(
+        "--table-mode",
+        type=str,
+        choices=["image", "markdown", "image_with_comment_md"],
+        default="image_with_comment_md",
+        help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+    )
     markdown_all_parser.set_defaults(func=markdown_all_command)
 
     args = argparser.parse_args()
