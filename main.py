@@ -651,6 +651,54 @@ def construct_markdown_from_result(
         doc_generator.save_cover_image(cover_page_number)
     return doc_generator.gen()
 
+EPUB_CSS = """
+.inline-formula-img {
+    display: inline-block;
+    height: 1.2em;
+    line-height: 1.2;
+    margin: 0;
+    padding: 0;
+}
+"""
+
+
+def process_azure(pdf_file_path: Path, result_root_folder_path: Path, use_formula_addon: bool = False):
+    result_folder_path = (
+        result_root_folder_path / pdf_file_path.with_suffix("").name
+    )
+    result_folder_path.mkdir(exist_ok=True, parents=True)
+    (result_folder_path / "source.pdf").write_bytes(pdf_file_path.read_bytes())
+    logger.info(f"analyzing {pdf_file_path}")
+
+    analyze_document_with_azure(
+        pdf_file_path, result_folder_path, args.use_formula_addon
+    )
+    logger.info(f"result is saved in {result_folder_path}")
+
+def process_markdown(result_folder_path: Path, cover_page: int | None = None, no_cover: bool = False, table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md"):
+    json_file_path: Path = result_folder_path / "response.json"
+    pdf_file_path: Path = (
+        args.pdf_file_path
+        if args.pdf_file_path
+        else result_folder_path / "source.pdf"
+    )
+    markdown = construct_markdown_from_result(
+        json_file_path,
+        pdf_file_path,
+        cover_page,
+        table_mode=table_mode,
+    )
+    
+    result_markdown_file_path = result_folder_path / "result.md"
+    result_markdown_file_path.write_text(markdown)
+
+    epub_css_file_path = result_folder_path / "epub.css"
+    epub_css_file_path.write_text(EPUB_CSS)
+
+    print(
+        f"cd {result_folder_path} && pandoc result.md -o {result_folder_path.with_suffix('.epub').name} --toc --epub-cover-image=figures/cover.png  --metadata title='{result_folder_path.name}' --css=epub.css --strip-comments"
+    )
+
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
@@ -659,17 +707,9 @@ if __name__ == "__main__":
     def ocr_command(args: argparse.Namespace):
         pdf_file_path: Path = args.pdf_file_path
         result_root_folder_path: Path = args.resultdir
-        result_folder_path = (
-            result_root_folder_path / pdf_file_path.with_suffix("").name
-        )
-        result_folder_path.mkdir(exist_ok=True, parents=True)
-        (result_folder_path / "source.pdf").write_bytes(pdf_file_path.read_bytes())
-        logger.info(f"analyzing {pdf_file_path}")
 
-        analyze_document_with_azure(
-            pdf_file_path, result_folder_path, args.use_formula_addon
-        )
-        logger.info(f"result is saved in {result_folder_path}")
+        process_azure(pdf_file_path, result_root_folder_path, args.use_formula_addon)
+        
 
     azure_ocr_parser = subparsers.add_parser("azure")
     azure_ocr_parser.add_argument("pdf_file_path", type=Path)
@@ -679,37 +719,8 @@ if __name__ == "__main__":
 
     def markdown_command(args: argparse.Namespace):
         result_folder_path: Path = args.result_folder_path
-        json_file_path: Path = result_folder_path / "response.json"
-        pdf_file_path: Path = (
-            args.pdf_file_path
-            if args.pdf_file_path
-            else result_folder_path / "source.pdf"
-        )
         cover_page = args.cover_page if not args.no_cover else None
-        markdown = construct_markdown_from_result(
-            json_file_path,
-            pdf_file_path,
-            cover_page,
-            table_mode=args.table_mode,
-        )
-        result_markdown_file_path = result_folder_path / "result.md"
-        result_markdown_file_path.write_text(markdown)
-
-        epub_css = """
-.inline-formula-img {
-    display: inline-block;
-    height: 1.2em;
-    line-height: 1.2;
-    margin: 0;
-    padding: 0;
-}
-"""
-        epub_css_file_path = result_folder_path / "epub.css"
-        epub_css_file_path.write_text(epub_css)
-
-        print(
-            f"cd {result_folder_path} && pandoc result.md -o {result_folder_path.with_suffix('.epub').name} --toc --epub-cover-image=figures/cover.png  --metadata title='{result_folder_path.name}' --css=epub.css --strip-comments"
-        )
+        process_markdown(result_folder_path, cover_page, args.no_cover, args.table_mode)
 
     markdown_parser = subparsers.add_parser("markdown")
     markdown_parser.add_argument("result_folder_path", type=Path)
@@ -724,6 +735,36 @@ if __name__ == "__main__":
         help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
     )
     markdown_parser.set_defaults(func=markdown_command)
+
+
+    # 上記のスクリプトを、指定されたディレクトリ内のすべての PDF ファイルに対して実行する
+    def azure_all_command(args: argparse.Namespace):
+        pdf_file_path: Path = args.pdf_file_path
+        result_root_folder_path: Path = args.resultdir
+        for pdf_file in pdf_file_path.glob("*.pdf"):
+            process_azure(pdf_file, result_root_folder_path, args.use_formula_addon)
+            
+    azure_azure_all_parser = subparsers.add_parser("azure_all")
+    azure_azure_all_parser.add_argument("pdf_file_path", type=Path)
+    azure_azure_all_parser.add_argument("--resultdir", type=Path, default=Path("ocr_results"))
+    azure_azure_all_parser.add_argument("--use-formula-addon", type=bool, default=False)
+    azure_azure_all_parser.set_defaults(func=azure_all_command)
+
+    def markdown_all_command(args: argparse.Namespace):
+        result_folder_path: Path = args.result_folder_path
+        # サブディレクトリを全て取得する（glob）
+        subdirs = [d for d in result_folder_path.glob("*") if d.is_dir()]
+        print(f"subdirs: {subdirs}")
+
+        for subdir in subdirs:
+            process_markdown(subdir, args.cover_page, args.no_cover, args.table_mode)
+
+    markdown_all_parser = subparsers.add_parser("markdown_all")
+    markdown_all_parser.add_argument("result_folder_path", type=Path)
+    markdown_all_parser.add_argument("--pdf_file_path", type=Path, default=None)
+    markdown_all_parser.add_argument("--cover_page", type=int, default=0)
+    markdown_all_parser.add_argument("--no-cover", type=bool, default=False)
+    markdown_all_parser.set_defaults(func=markdown_all_command)
 
     args = argparser.parse_args()
     if hasattr(args, "func"):
