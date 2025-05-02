@@ -39,3 +39,12 @@ pandoc result.md -o result.epub --toc --epub-cover-image=figures/cover.png --met
 
 - 生成された Markdown は手動で調整が必要な場合があります。
 - スクリプトは OCR 結果を `results` ディレクトリに保存します。
+
+
+# Known Issues
+- タイトルなのに、PageHeader とみなされてしまう場合があります
+  - Markdown 変換時に PageHeader は削除しています
+  - そのほかにも OCR や領域認識の精度の問題はあるはずです
+- sections から再帰的に要素を取得していますが、sections から特定の要素を辿れないことがあります
+  - トップレベルの pages や content をみると、きちんと content として table が認識されているのに、sections から辿ると、その table の content にアクセスできないことがあります。
+  - トップレベルの tables にもデータが格納されていません
