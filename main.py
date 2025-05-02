@@ -123,6 +123,7 @@ class DocGennerator:
         *,
         logger: Logger = getLogger(__name__),
         table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md",
+        figure_mode: Literal["image", "image_with_comment_md"] = "image_with_comment_md",
     ):
         """
         result は、azure の OCR データでテキストや座標などの情報が含まれている
@@ -132,6 +133,9 @@ class DocGennerator:
         image は画像として表を保存する。
         markdown はマークダウン形式で表を保存する。
         image_with_comment_md は画像として表を保存し、その後にコメントとしてマークダウン形式のテーブルを埋め込む。
+        figure_mode は、図の出力形式を指定する。
+        image は画像として図を保存する。
+        image_with_comment_md は画像として図を保存し、その後にコメントとして OCR で抽出したテキストを埋め込む。
         """
         self.result = result
         self.content = result.content
@@ -145,6 +149,7 @@ class DocGennerator:
         self.asset_folder_path.mkdir(exist_ok=True, parents=True)
         self.logger = logger
         self.table_mode = table_mode
+        self.figure_mode = figure_mode
 
         self.formulas: list[DocumentFormula] = []
         for page in self.pages:
@@ -381,7 +386,7 @@ class DocGennerator:
                 markdown += f"\n\n![{figure.id} footnote {i}](./figures/fig_{figure.id}_footnote_{i}.png) \\\n\n"
 
         # elements から paragraph の情報を取得してコメントとして追加
-        if figure.elements:
+        if self.figure_mode == "image_with_comment_md" and figure.elements:
             markdown += "\n<!--\nExtracted text:\n"
             for element in figure.elements:
                 element_info = self._get_element(element)
@@ -633,6 +638,7 @@ def construct_markdown_from_result(
     pdf_file_path: Path,
     cover_page_number: int | None = 0,
     table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md",
+    figure_mode: Literal["image", "image_with_comment_md"] = "image_with_comment_md",
 ) -> str:
     """
     section を上から順に見ていき、順番に markdown に変換していく
@@ -646,6 +652,7 @@ def construct_markdown_from_result(
         pdf_file_path,
         analyzed_json_path.parent,
         table_mode=table_mode,
+        figure_mode=figure_mode,
     )
     if cover_page_number is not None:
         doc_generator.save_cover_image(cover_page_number)
@@ -675,18 +682,21 @@ def process_azure(pdf_file_path: Path, result_root_folder_path: Path, use_formul
     )
     logger.info(f"result is saved in {result_folder_path}")
 
-def process_markdown(result_folder_path: Path, cover_page: int | None = None, no_cover: bool = False, table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md"):
+def process_markdown(
+    result_folder_path: Path,
+    cover_page: int | None = None,
+    no_cover: bool = False,
+    table_mode: Literal["image", "markdown", "image_with_comment_md"] = "image_with_comment_md",
+    figure_mode: Literal["image", "image_with_comment_md"] = "image_with_comment_md",
+):
     json_file_path: Path = result_folder_path / "response.json"
-    pdf_file_path: Path = (
-        args.pdf_file_path
-        if args.pdf_file_path
-        else result_folder_path / "source.pdf"
-    )
+    pdf_file_path: Path = result_folder_path / "source.pdf"
     markdown = construct_markdown_from_result(
         json_file_path,
         pdf_file_path,
         cover_page,
         table_mode=table_mode,
+        figure_mode=figure_mode,
     )
     
     result_markdown_file_path = result_folder_path / "result.md"
@@ -720,7 +730,13 @@ if __name__ == "__main__":
     def markdown_command(args: argparse.Namespace):
         result_folder_path: Path = args.result_folder_path
         cover_page = args.cover_page if not args.no_cover else None
-        process_markdown(result_folder_path, cover_page, args.no_cover, args.table_mode)
+        process_markdown(
+            result_folder_path,
+            cover_page,
+            args.no_cover,
+            args.table_mode,
+            args.figure_mode,
+        )
 
     markdown_parser = subparsers.add_parser("markdown")
     markdown_parser.add_argument("result_folder_path", type=Path)
@@ -733,6 +749,13 @@ if __name__ == "__main__":
         choices=["image", "markdown", "image_with_comment_md"],
         default="image_with_comment_md",
         help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+    )
+    markdown_parser.add_argument(
+        "--figure-mode",
+        type=str,
+        choices=["image", "image_with_comment_md"],
+        default="image_with_comment_md",
+        help="Figure output mode: 'image' for image-based figures, 'image_with_comment_md' for image with OCR text in comments (default)",
     )
     markdown_parser.set_defaults(func=markdown_command)
 
@@ -757,7 +780,13 @@ if __name__ == "__main__":
         print(f"subdirs: {subdirs}")
 
         for subdir in subdirs:
-            process_markdown(subdir, args.cover_page, args.no_cover, args.table_mode)
+            process_markdown(
+                subdir,
+                args.cover_page,
+                args.no_cover,
+                args.table_mode,
+                args.figure_mode,
+            )
 
     markdown_all_parser = subparsers.add_parser("markdown_all")
     markdown_all_parser.add_argument("result_folder_path", type=Path)
@@ -770,6 +799,13 @@ if __name__ == "__main__":
         choices=["image", "markdown", "image_with_comment_md"],
         default="image_with_comment_md",
         help="Table output mode: 'image' for image-based tables, 'markdown' for markdown tables, 'image_with_comment_md' for both formats (default)",
+    )
+    markdown_all_parser.add_argument(
+        "--figure-mode",
+        type=str,
+        choices=["image", "image_with_comment_md"],
+        default="image_with_comment_md",
+        help="Figure output mode: 'image' for image-based figures, 'image_with_comment_md' for image with OCR text in comments (default)",
     )
     markdown_all_parser.set_defaults(func=markdown_all_command)
 
