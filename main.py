@@ -92,7 +92,7 @@ def analyze_document_with_azure(
     poller = document_intelligence_client.begin_analyze_document(
         "prebuilt-layout",
         pdf_reader,
-        output_content_format=DocumentContentFormat.MARKDOWN,
+        output_content_format=DocumentContentFormat.TEXT,
         features=addons,
     )
     pdf_reader.close()
